@@ -272,6 +272,8 @@ class FileSelectorApp(QWidget):
         program2_test_path = os.path.join(self.test2_path, selected_text)
         state_seq1_file_path = os.path.join(program1_test_path,"state_sequence.json")
         state_seq2_file_path = os.path.join(program2_test_path, "state_sequence.json")
+        read_seq1_file_path = os.path.join(program1_test_path,"read_var_sequence.json")
+        read_seq2_file_path = os.path.join(program2_test_path, "read_var_sequence.json")
         visualizer_file_path = os.path.join(self.script_dir, "visual2.py")
 
         # --- Определение пути к исполняемому файлу Python в venv ---
@@ -280,7 +282,7 @@ class FileSelectorApp(QWidget):
             python_executable = os.path.join(venv_path, 'Scripts', 'python.exe')
         else:  # Linux/macOS
             python_executable = os.path.join(venv_path, 'bin', 'python')
-        args = [python_executable, visualizer_file_path, state_seq1_file_path, state_seq2_file_path]
+        args = [python_executable, visualizer_file_path, state_seq1_file_path, state_seq2_file_path, read_seq1_file_path, read_seq2_file_path]
         print(args)
         subprocess.run(args)
 
