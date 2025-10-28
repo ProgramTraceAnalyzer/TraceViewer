@@ -5,6 +5,25 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt5.QtCore import Qt
 import subprocess
 import json
+import threading
+
+def run_subprocess(args):
+    """
+  Функция, которая будет выполняться в отдельном потоке
+  для запуска подпроцесса.
+  """
+    try:
+        # subprocess.run() блокирует до завершения подпроцесса,
+        # поэтому это будет выполняться в отдельном потоке.
+        result = subprocess.run(args, capture_output=True, text=True)
+        print(f"Подпроцесс завершен. Код возврата: {result.returncode}")
+        print(f"Стандартный вывод:\n{result.stdout}")
+        print(f"Стандартная ошибка:\n{result.stderr}")
+    except FileNotFoundError:
+        print(f"Ошибка: Команда '{args[0]}' не найдена.")
+    except Exception as e:
+        print(f"Произошла ошибка при выполнении подпроцесса: {e}")
+
 
 class FileSelectorApp(QWidget):
     def __init__(self):
@@ -79,7 +98,6 @@ class FileSelectorApp(QWidget):
         separator3.setFrameShadow(QFrame.Sunken)
         main_layout.addWidget(separator3)
 
-
         # Добавляем LineEdit
         self.line_edit_label = QLabel("Введите текст:")
         self.func_name_line_edit = QLineEdit()
@@ -126,7 +144,7 @@ class FileSelectorApp(QWidget):
     def select_file1(self):
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self, "Выберите файл первой программы", "",
-                                                    "Файлы С/С++ (*.cpp);;Все файлы (*)", options=options)
+                                                   "Файлы С/С++ (*.cpp);;Все файлы (*)", options=options)
         if file_path:
             self.file1_path = file_path
             self.file1_path_label.setText(file_path)
@@ -136,7 +154,7 @@ class FileSelectorApp(QWidget):
     def select_file2(self):
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self, "Выберите файл второй программы", "",
-                                                    "Файлы С/С++ (*.cpp);;Все файлы (*)", options=options)
+                                                   "Файлы С/С++ (*.cpp);;Все файлы (*)", options=options)
         if file_path:
             self.file2_path = file_path
             self.file2_path_label.setText(file_path)
@@ -146,7 +164,7 @@ class FileSelectorApp(QWidget):
     def select_file3(self):
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self, "Выберите файл конфигурации задания", "",
-                                                    "Файлы JSON (*.json);;Все файлы (*)", options=options)
+                                                   "Файлы JSON (*.json);;Все файлы (*)", options=options)
         if file_path:
             self.file3_path = file_path
             self.file3_path_label.setText(file_path)
@@ -174,7 +192,7 @@ class FileSelectorApp(QWidget):
         traces2_path = os.path.join(tmp2_path, "traces")
         pg1_dot_path = os.path.join(tmp1_path, "pg.dot")
         pg2_dot_path = os.path.join(tmp2_path, "pg.dot")
-        os.makedirs(tmp1_path,exist_ok=True)
+        os.makedirs(tmp1_path, exist_ok=True)
         os.makedirs(tmp2_path, exist_ok=True)
         os.makedirs(traces1_path, exist_ok=True)
         os.makedirs(traces2_path, exist_ok=True)
@@ -211,9 +229,7 @@ class FileSelectorApp(QWidget):
         else:
             results.append("Файл конфигурации задания не выбран.")
 
-
         self.result_label.setText("\n".join(results))
-
 
     def load_file_content(self, file_path, text_edit):
         """
@@ -270,9 +286,9 @@ class FileSelectorApp(QWidget):
 
         program1_test_path = os.path.join(self.test1_path, selected_text)
         program2_test_path = os.path.join(self.test2_path, selected_text)
-        state_seq1_file_path = os.path.join(program1_test_path,"state_sequence.json")
+        state_seq1_file_path = os.path.join(program1_test_path, "state_sequence.json")
         state_seq2_file_path = os.path.join(program2_test_path, "state_sequence.json")
-        read_seq1_file_path = os.path.join(program1_test_path,"read_var_sequence.json")
+        read_seq1_file_path = os.path.join(program1_test_path, "read_var_sequence.json")
         read_seq2_file_path = os.path.join(program2_test_path, "read_var_sequence.json")
         visualizer_file_path = os.path.join(self.script_dir, "visual2.py")
 
@@ -282,10 +298,13 @@ class FileSelectorApp(QWidget):
             python_executable = os.path.join(venv_path, 'Scripts', 'python.exe')
         else:  # Linux/macOS
             python_executable = os.path.join(venv_path, 'bin', 'python')
-        args = [python_executable, visualizer_file_path, state_seq1_file_path, state_seq2_file_path, read_seq1_file_path, read_seq2_file_path]
+        args = [python_executable, visualizer_file_path, state_seq1_file_path, state_seq2_file_path,
+                read_seq1_file_path, read_seq2_file_path]
         print(args)
-        subprocess.run(args)
-
+        thread = threading.Thread(target=run_subprocess, args=(args,))
+        # Запускаем поток
+        thread.start()
+        # subprocess.run(args)
 
     def build_traces_for_tests(self, pg_dot_file_path, input_variables, test_cases, program_test_root_path):
         print("build tests...")
@@ -309,7 +328,6 @@ class FileSelectorApp(QWidget):
             print(arg_list)
             subprocess.run(arg_list, cwd=test_dir)
         return True
-
 
 
 if __name__ == '__main__':
