@@ -186,10 +186,32 @@ class MainWindow(QMainWindow):
         refresh_button.clicked.connect(self.update_plot)
         layout.addWidget(refresh_button)
 
+    def clear_layout(self, layout):
+        print("Начинаем очистку...")
 
+        # Цикл выполняется, пока в макете есть элементы (size() > 0)
+        while layout.count():
+            # Получаем элемент по индексу 0 (сверху)
+            item = layout.takeAt(0)
+
+            # item.widget() возвращает сам виджет (если это виджет, а не другой макет)
+            widget = item.widget()
+
+            if widget is not None:
+                # Обязательно вызываем deleteLater() для безопасного удаления виджета
+                widget.deleteLater()
+                #widget.destroy()
+                print(f"Удален виджет: {widget.text()}")
+            else:
+                # Если item не виджет, а другой layout (например, QSpacerItem или вложенный layout)
+                # его нужно обрабатывать иначе или игнорировать
+                print("Удален не-виджет элемент.")
+
+        print("Макет очищен.")
 
     def add_mapping_widgets(self):
         print("Add mapping widgets")
+        self.clear_layout(self.var_mapping_layout)
         self.var_mapping_prog1_combos = []
         self.var_mapping_prog2_combos = []
         add_mapping_pair_btn = QPushButton("+")
@@ -335,6 +357,7 @@ class MainWindow(QMainWindow):
 
         if plot_type == "Line Plot":
             self._plot_line(var_A, var_B)
+            # self._plot_line_dtw(var_A, var_B)
         elif plot_type == "Scatter Plot":
             self._plot_scatter(var_A, var_B)
         elif plot_type == "Bar Chart":
@@ -392,6 +415,200 @@ class MainWindow(QMainWindow):
         ax.set_title(f"Line Plot: {var_A} vs {var_B}")
         ax.legend()
 
+    def dtw_nan(self, a, b, gap_penalty=1.0, nan_gap_penalty=1e6, both_nan_cost=0.0, both_nan_gap_cost=0.0, p=1):
+        a = np.asarray(a, dtype=float)
+        b = np.asarray(b, dtype=float)
+        fa = ~np.isnan(a)
+        fb = ~np.isnan(b)
+        n, m = len(a), len(b)
+
+        D = np.full((n + 1, m + 1), np.inf, dtype=float)
+        back = np.zeros((n + 1, m + 1), dtype=np.uint8)  # 1=diag, 2=up, 3=left
+        D[0, 0] = 0.0
+
+        # Инициализация первой колонки (сопоставляем префикс a с пустым b)
+        for i in range(1, n + 1):
+            cost = nan_gap_penalty if not fa[i - 1] else gap_penalty
+            D[i, 0] = D[i - 1, 0] + cost
+            back[i, 0] = 2  # up
+
+        # Инициализация первой строки (сопоставляем префикс b с пустым a)
+        for j in range(1, m + 1):
+            cost = nan_gap_penalty if not fb[j - 1] else gap_penalty
+            D[0, j] = D[0, j - 1] + cost
+            back[0, j] = 3  # left
+
+        # Основной DP
+        for i in range(1, n + 1):
+            ai = a[i - 1];
+            ai_f = fa[i - 1]
+            for j in range(1, m + 1):
+                bj = b[j - 1];
+                bj_f = fb[j - 1]
+
+                if ai_f and bj_f:
+                    # Обычная пара чисел
+                    d = abs(ai - bj)
+                    if p == 1:
+                        base = d
+                    elif p == 2:
+                        base = d * d
+                    else:
+                        base = d ** p
+                    c_diag = D[i - 1, j - 1] + base
+                    c_up = D[i - 1, j] + gap_penalty
+                    c_left = D[i, j - 1] + gap_penalty
+
+                    if c_diag <= c_up and c_diag <= c_left:
+                        D[i, j] = c_diag;
+                        back[i, j] = 1
+                    elif c_up <= c_left:
+                        D[i, j] = c_up;
+                        back[i, j] = 2
+                    else:
+                        D[i, j] = c_left;
+                        back[i, j] = 3
+
+                elif (not ai_f) and (not bj_f):
+                    # Оба NaN — совпадение без штрафа, растягивания внутри блока NaN с both_nan_gap_cost
+                    c_diag = D[i - 1, j - 1] + both_nan_cost
+                    c_up = D[i - 1, j] + both_nan_gap_cost
+                    c_left = D[i, j - 1] + both_nan_gap_cost
+
+                    if c_diag <= c_up and c_diag <= c_left:
+                        D[i, j] = c_diag;
+                        back[i, j] = 1
+                    elif c_up <= c_left:
+                        D[i, j] = c_up;
+                        back[i, j] = 2
+                    else:
+                        D[i, j] = c_left;
+                        back[i, j] = 3
+
+                else:
+                    # Один NaN, другой число — диагональ запрещаем, только дорогие "гэпы"
+                    c_up = D[i - 1, j] + nan_gap_penalty
+                    c_left = D[i, j - 1] + nan_gap_penalty
+                    if c_up <= c_left:
+                        D[i, j] = c_up;
+                        back[i, j] = 2
+                    else:
+                        D[i, j] = c_left;
+                        back[i, j] = 3
+
+        dist = D[n, m]
+
+        # Восстановление пути
+        path = []
+        i, j = n, m
+        while i > 0 or j > 0:
+            bt = back[i, j]
+            if bt == 1:  # diag
+                path.append((i - 1, j - 1))
+                i -= 1;
+                j -= 1
+            elif bt == 2:  # up
+                path.append((i - 1, j))
+                i -= 1
+            else:  # left
+                path.append((i, j - 1))
+                j -= 1
+        path.reverse()
+        return dist, path, D
+
+    def _plot_line_dtw(self, var_A, var_B):
+        """
+        Рисует две серии и соединительные линии по пути DTW прямо в существующий
+        виджет self.plot_canva (Matplotlib FigureCanvas).
+
+        Возвращает (dist, path).
+        """
+        import numpy as np
+
+        # Подготовка данных: либо берем из датафреймов по именам столбцов, либо используем переданные массивы/Series
+        if hasattr(self, "df_A") and hasattr(self, "df_B") and isinstance(var_A, str) and isinstance(var_B, str):
+            sA = self.df_A[var_A]
+            sB = self.df_B[var_B]
+            name_A = var_A
+            name_B = var_B
+        else:
+            sA = var_A
+            sB = var_B
+            name_A = getattr(sA, "name", "A")
+            name_B = getattr(sB, "name", "B")
+
+        a = np.asarray(sA, dtype=float)
+        b = np.asarray(sB, dtype=float)
+
+        # Индексы X (если у Series есть индекс — используем его; иначе 0..n-1)
+        try:
+            idx_a = np.asarray(getattr(sA, "index", np.arange(len(a))))
+        except Exception:
+            idx_a = np.arange(len(a))
+        try:
+            idx_b = np.asarray(getattr(sB, "index", np.arange(len(b))))
+        except Exception:
+            idx_b = np.arange(len(b))
+
+        # Параметры DTW (берем из self при наличии)
+        gap_penalty = getattr(self, "dtw_gap_penalty", 1.0)
+        nan_gap_penalty = getattr(self, "dtw_nan_gap_penalty", 1e6)
+        both_nan_cost = getattr(self, "dtw_both_nan_cost", 0.0)
+        both_nan_gap_cost = getattr(self, "dtw_both_nan_gap_cost", 0.0)
+        p = getattr(self, "dtw_p", 1)
+
+        # Вычисление DTW с учетом NaN
+        dist, path, D = self.dtw_nan(
+            a, b,
+            gap_penalty=gap_penalty,
+            nan_gap_penalty=nan_gap_penalty,
+            both_nan_cost=both_nan_cost,
+            both_nan_gap_cost=both_nan_gap_cost,
+            p=p
+        )
+
+        # Рисуем в уже существующий FigureCanvas: self.plot_canva
+        fig = getattr(self.plot_canva, "figure", None)
+        if fig is None:
+            raise RuntimeError("self.plot_canva не содержит Figure (ожидается Matplotlib FigureCanvas).")
+
+        fig.clf()
+        ax = fig.add_subplot(111)
+
+        # Линии самих серий
+        ax.plot(idx_a, a, label=f"{name_A}", color="tab:blue")
+        ax.plot(idx_b, b, label=f"{name_B}", color="tab:orange")
+
+        # Соединительные линии по пути DTW — прореживаем, чтобы не захламлять
+        path_array = np.asarray(path, dtype=int)
+        max_lines = getattr(self, "dtw_max_connectors", 200)
+        if max_lines and len(path_array) > max_lines:
+            sel = np.linspace(0, len(path_array) - 1, max_lines).astype(int)
+            path_draw = path_array[sel]
+        else:
+            path_draw = path_array
+
+        # Рисуем соединения только для валидных пар (оба значения конечные)
+        for i, j in path_draw:
+            ai = a[i]
+            bj = b[j]
+            if np.isfinite(ai) and np.isfinite(bj):
+                ax.plot([idx_a[i], idx_b[j]], [ai, bj], color="gray", alpha=0.2, linewidth=0.7)
+
+        ax.set_title(f"DTW выравнивание ({name_A} vs {name_B}) | distance={dist:.3g}")
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        # Обновляем виджет
+        try:
+            # предпочтительно не блокировать UI
+            self.plot_canva.draw_idle()
+        except Exception:
+            # запасной вариант
+            self.plot_canva.draw()
+
+        #return dist, path
+
     def _matrix(self):
         #dfA, dfB = self.current_dfs(var_A, var_B)
         print("start matrix")
@@ -407,6 +624,204 @@ class MainWindow(QMainWindow):
         #print(eq_matrix)
         self.draw_clones(eq_matrix, copy_df1) #draw_similarity_matrix(eq_matrix)
 
+    def calc_ng_clone_points(self,start, ng_clone):
+        start_x = ng_clone['start']['x']
+        finish_x = ng_clone['finish']['x']
+        ng_clone_length = finish_x - start_x + 1
+        points = []
+        for i in range(0, ng_clone_length):
+            points.append({'x': start + i, 'y': 0, 'fake_x': start_x + i, 'fake_y': ng_clone['start']['y'] + i})
+        return points, start + ng_clone_length
+
+    def calc_gap_points(self, start, gap):
+        start_x = gap['start']['x']
+        finish_x = gap['finish']['x']
+        start_y = gap['start']['y']
+        finish_y = gap['finish']['y']
+        length_x = finish_x - start_x
+        length_y = finish_y - start_y
+        real_length = max(length_x, length_y)
+        interval_x = real_length / length_x
+        interval_y = real_length / length_y
+        points_x = []
+        for i in range(1, length_x):
+            points_x.append({'x': start + i * interval_x, 'y': -1, 'fake_x': start_x + i})
+        points_y = []
+        for i in range(1, length_y):
+            points_y.append({'x': start + i * interval_y, 'y': 1, 'fake_y': start_y + i})
+        return points_x, points_y, start + real_length
+
+    def draw_clone(self, clone, df1 : pd.DataFrame, df2: pd.DataFrame):
+        ax = self.plot_canvas.axes
+        ax.clear()
+
+        start = 0
+
+        # Для соединения: конец предыдущего ng и концы текущего gap (которые нужно будет соединить с следующим ng)
+        prev_ng_last = None
+        pending_gap_x_end = None
+        pending_gap_y_end = None
+
+        def _row_label(df, idx):
+            import pandas as pd
+            import numpy as np
+            try:
+                row = df.loc[idx]
+            except KeyError:
+                return f"{idx} not in df"
+            # На случай дубликатов индексов
+            if isinstance(row, pd.DataFrame):
+                row = row.iloc[0]
+
+            def fmt(val):
+                if pd.isna(val):
+                    return ""
+                # Целые числа (включая numpy.integer)
+                if isinstance(val, (int, np.integer)):
+                    return str(int(val))
+                # Вещественные числа: если целочисленные по значению, выводим как int
+                if isinstance(val, (float, np.floating)):
+                    if np.isfinite(val) and float(val).is_integer():
+                        return str(int(val))
+                    return str(val)
+                # Прочие типы
+                return str(val)
+
+            return "\n".join(f"{col}={fmt(val)}" for col, val in row.items())
+
+        for item in clone:
+            if item.get("type") == "ng_clone":
+                ng_points, new_start = self.calc_ng_clone_points(start, item)
+
+                if ng_points:
+                    # Координаты
+                    xs = [p['x'] for p in ng_points]
+                    ys = [p['y'] for p in ng_points]
+
+                    # Линия ng_clone — чёрная
+                    ax.plot(xs, ys, color='black', linewidth=1.5)
+
+                    # Точки ng_clone — чёрные ромбики
+                    ax.scatter(xs, ys, marker='D', color='black', s=40, zorder=3)
+
+                    # Подписи над точками
+                    for p in ng_points:
+                        label_y = _row_label(df1, p['fake_y'])
+                        ax.text(
+                            p['x'],
+                            p['y'] + 0.1,
+                            label_y,
+                            ha='center', va='bottom',
+                            fontsize=12, color='black'
+                        )
+
+                    # Если до этого был gap — соединяем его конец с началом текущего ng_clone
+                    if pending_gap_x_end is not None:
+                        ax.plot(
+                            [pending_gap_x_end['x'], ng_points[0]['x']],
+                            [pending_gap_x_end['y'], ng_points[0]['y']],
+                            color='grey', linewidth=1.0
+                        )
+                        pending_gap_x_end = None
+
+                    if pending_gap_y_end is not None:
+                        ax.plot(
+                            [pending_gap_y_end['x'], ng_points[0]['x']],
+                            [pending_gap_y_end['y'], ng_points[0]['y']],
+                            color='grey', linewidth=1.0
+                        )
+                        pending_gap_y_end = None
+
+                    # Запомним конец текущего ng_clone, чтобы соединить с началом следующего gap
+                    prev_ng_last = ng_points[-1]
+
+                start = new_start
+
+            elif item.get("type") == "gap":
+                gap_points_x, gap_points_y, new_start = self.calc_gap_points(start, item)
+                real_length = new_start - start
+
+                # Соединяем начало gap с предыдущим ng_clone (если он был)
+                if prev_ng_last is not None:
+                    # Начальные точки линий gap по X и Y (уровни -1 и +1)
+                    ax.plot(
+                        [prev_ng_last['x'], start],
+                        [prev_ng_last['y'], -1],
+                        color='grey', linewidth=1.0
+                    )
+                    ax.plot(
+                        [prev_ng_last['x'], start],
+                        [prev_ng_last['y'], 1],
+                        color='grey', linewidth=1.0
+                    )
+
+                # Линия gap по X — серая, точки — красные крестики, подпись снизу "fake_x = ..."
+                if real_length > 0:
+                    xs_path_x = [start] + [p['x'] for p in gap_points_x] + [start + real_length]
+                    ys_path_x = [-1] * len(xs_path_x)
+                    ax.plot(xs_path_x, ys_path_x, color='grey', linewidth=1.0)
+
+                if gap_points_x:
+                    xs_x = [p['x'] for p in gap_points_x]
+                    ys_x = [-1] * len(xs_x)
+                    ax.scatter(xs_x, ys_x, marker='x', color='red', s=40, zorder=3)
+                    for p in gap_points_x:
+                        label_x = _row_label(df2, p['fake_x'])
+                        ax.annotate(
+                            label_x,
+                            (p['x'], -1),
+                            textcoords='offset points',
+                            xytext=(0, -6),
+                            ha='center',
+                            va='top',
+                            fontsize=12,
+                            color='red'
+                        )
+
+                # Линия gap по Y — серая, точки — оранжевые кружочки, подпись снизу "fake_y = ..."
+                if real_length > 0:
+                    xs_path_y = [start] + [p['x'] for p in gap_points_y] + [start + real_length]
+                    ys_path_y = [1] * len(xs_path_y)
+                    ax.plot(xs_path_y, ys_path_y, color='grey', linewidth=1.0)
+
+                if gap_points_y:
+                    xs_y = [p['x'] for p in gap_points_y]
+                    ys_y = [1] * len(xs_y)
+                    # Пустые кружочки
+                    ax.scatter(xs_y, ys_y, marker='o', facecolors='none', edgecolors='orange', s=40, zorder=3)
+                    for p in gap_points_y:
+                        label_y = _row_label(df1, p['fake_y'])
+                        ax.annotate(
+                            label_y,
+                            (p['x'], 1),
+                            textcoords='offset points',
+                            xytext=(0, 6),
+                            ha='center',
+                            va='bottom',
+                            fontsize=12,
+                            color='orange'
+                        )
+
+                # Запомним концы линий gap, чтобы соединить их с началом следующего ng_clone
+                pending_gap_x_end = {'x': start + real_length, 'y': -1} if real_length > 0 else None
+                pending_gap_y_end = {'x': start + real_length, 'y': 1} if real_length > 0 else None
+
+                # После gap конец предыдущего ng больше не актуален
+                prev_ng_last = None
+                start = new_start
+
+        # Оформление осей/сетки
+        ax.set_xlabel('x')
+        ax.set_ylabel('layer')
+        ax.set_yticks([-1, 0, 1])
+        ax.set_yticklabels(['gap_x', 'ng_clone', 'gap_y'])
+        ax.grid(True, linestyle=':', alpha=0.5)
+        ax.set_title('Clone mapping')
+        ax.set_ylim(-2,2)
+
+        self.plot_canvas.figure.tight_layout()
+        self.plot_canvas.draw()
+
     def _clone_indicators(self):
         mapping = self.extract_mapping()
         copy_df1, copy_df2 = self.generate_nonstutter_mapped_dataframes(self.dedupA, self.dedupB, mapping)
@@ -415,7 +830,18 @@ class MainWindow(QMainWindow):
         gaps = self.find_gaps(ng_clones)
         clones = self.build_clones(ng_clones, gaps)
         print("IS POIN IN NG CLONE: ",self.is_point_in_ng_clone("x", 5, clones[0]))
-        self.plot_two_indicators(clones[0], copy_df1, copy_df2)
+        ng_clone_0 = clones[0][0]
+        ng_clone_last = clones[0][len(clones[0])-1]
+        if ng_clone_0["start"]["x"]>0 or ng_clone_0["start"]["y"]>0:
+            clones.insert(0, {'type':'gap',"start": {"y": 0, "x": 0}, "finish": {"y": ng_clone_0["start"]["y"], "x": ng_clone_0["start"]["x"]}})
+        if ng_clone_last["finish"]["x"]<len(copy_df2)-1 or ng_clone_last["finish"]["y"]<len(copy_df1)-1:
+            clones.append( {'type': 'gap', "start": {"y": ng_clone_last["finish"]["y"], "x": ng_clone_last["finish"]["x"]},
+                              "finish": {"y": len(copy_df1)-1, "x": len(copy_df2)-1}})
+
+
+        self.draw_clone(clones[0], copy_df1, copy_df2)
+        #self.plot_two_indicators(clones[0], copy_df1, copy_df2)
+
 
     def draw_two_read_matrixes(self, matrix1, matrix2):
         """
@@ -705,7 +1131,7 @@ class MainWindow(QMainWindow):
             x_end, y_end = get_center(finish_coord)  # и конца
 
             # Рисуем линию
-            ax.plot([x_start, x_end], [y_start, y_end], color='black', linewidth=2)
+            ax.plot([x_start, x_end], [y_start, y_end], color='black', linewidth=4)
 
             # Перебираем все целочисленные точки вдоль линии
             num_points = max(abs(x_end - x_start), abs(y_end - y_start)) + 1  # +1 чтобы захватить конечную точку
@@ -718,7 +1144,7 @@ class MainWindow(QMainWindow):
 
                 # Проверяем, что точка (x_int, y_int) находится в пределах матрицы.  Преобразуем в 0-индексацию для проверки
                 if 0 <= y_int - 1 < data.shape[0] and 0 <= x_int - 1 < data.shape[1]:
-                    ax.plot(x_int, y_int, marker='D', color='black', markersize=8)  # 'D' для ромбика
+                    ax.plot(x_int, y_int, marker='D', color='black', markersize=16)  # 'D' для ромбика
                     row = df.iloc[y_int-1]
                     label = '\n'.join(f'{col}={row[col]}' for col in df.columns)
                     ax.annotate(label, (x_int, y_int), xytext=(20, 10), textcoords='offset points', ha='left', va='center')
@@ -1039,6 +1465,8 @@ class MainWindow(QMainWindow):
     def generate_nonstutter_mapped_dataframes(self, df1 : pd.DataFrame, df2 : pd.DataFrame, mapping):
         copy_df1 = df1.copy()
         copy_df2 = df2.copy()
+        #columns_to_keep = list(mapping.values())
+        #copy_df2 = copy_df2[columns_to_keep]
 
         # 1) Переименовать столбцы в df2 по mapping (нужна инверсия словаря)
         inv_mapping = {v: k for k, v in mapping.items()}
@@ -1052,7 +1480,7 @@ class MainWindow(QMainWindow):
 
 
         copy_df1 = remove_stutter_steps(copy_df1)
-        print("COPY DF1\n", copy_df1)
+        print("COPY DF1 NON STUTTER\n", copy_df1)
         copy_df2 = remove_stutter_steps(copy_df2)
         print("COPY DF2\n", copy_df2)
         return copy_df1, copy_df2
@@ -1208,10 +1636,7 @@ class MainWindow(QMainWindow):
         mapping = self.extract_mapping()
         copy_df1, copy_df2 = self.generate_nonstutter_mapped_dataframes(df1,df2,mapping)
 
-        aligned_df1, aligned_df2 = self.align_dataframes(copy_df1, copy_df2)
-
-        print("ALIGNED DF1:\n",aligned_df1)
-        print("ALIGNED DF2:\n", aligned_df2)
+        print("COPY DFC ")
 
         A = copy_df1.to_numpy()
         B = copy_df2.to_numpy()
