@@ -14,13 +14,14 @@ from sklearn.preprocessing import StandardScaler
 import Levenshtein
 import matplotlib.pyplot as plt
 
+from dot_processer import dot_file_to_adjacency_dict
 from dtw_plot import safe_euclidean
 import os
 from pathlib import Path
 
 from sequence_view_splitter import SequenceViewSplitter
 from metrics import smith_waterman, lcs, dtw
-from sequence_preprocessing import remove_stutter_steps, reverse_sequence
+from sequence_preprocessing import remove_stutter_steps, reverse_sequence, preprocess_sequence
 
 script_path = Path(__file__).resolve()
 script_dir = script_path.parent
@@ -588,40 +589,51 @@ def get_read_variables_dfs(read_sequence_json):
         dfs[name] = df[name]
     return dfs
 
-def calculate_var_distances_by_dfs(variables_dfs1, variables_dfs2, allignment_function, non_stutter = False, reverse = False):
+def read_json_file(file_path):
+
+    with open(file_path, 'r', encoding='utf-8') as file:
+        data = json.load(file)
+    return data
+
+def calculate_var_distances_by_dfs(variables_dfs1, variables_dfs2, allignment_function, non_stutter = False, reverse = False, action_seq_json1=None, action_seq_json2=None, pidg_dot1 = None, pidg_dot2 = None, remove_unused = False):
     dtws = {}
     for var1 in variables_dfs1:
         dtws[var1] = {}
         list_values1 = np.array(variables_dfs1[var1].tolist(), dtype=float).flatten()
-        if non_stutter:
-            list_values1 = remove_stutter_steps(list_values1)
-        if reverse:
-            list_values1 = reverse_sequence(list_values1)
+        action_seq1 = read_json_file(action_seq_json1)
+        pidg_adj_matrix1 = dot_file_to_adjacency_dict(pidg_dot1)
+        list_values1 = preprocess_sequence(list_values1, non_stutter, reverse, var1, action_seq1, pidg_adj_matrix1, remove_unused)
         for var2 in variables_dfs2:
             list_values2 = np.array(variables_dfs2[var2].tolist(), dtype=float).flatten()
-            if non_stutter:
-                list_values2 = remove_stutter_steps(list_values2)
-            if reverse:
-                list_values2 = reverse_sequence(list_values2)
+            action_seq2 = read_json_file(action_seq_json2)
+            pidg_adj_matrix2 = dot_file_to_adjacency_dict(pidg_dot2)
+            list_values2 = preprocess_sequence(list_values2, non_stutter, reverse, var2, action_seq2, pidg_adj_matrix2, remove_unused)
+            if len(list_values1)> 0 and len(list_values2)>0:
+                #dtw_dist, dtw_path = fastdtw(list_values1, list_values2, dist=safe_euclidean)
+                print("CALL ALLIGNMENT FUNCTION", allignment_function)
+                matrix, path, similarity = allignment_function(list_values1, list_values2)
 
-            #dtw_dist, dtw_path = fastdtw(list_values1, list_values2, dist=safe_euclidean)
-            print("CALL ALLIGNMENT FUNCTION", allignment_function)
-            matrix, path, similarity = allignment_function(list_values1, list_values2)
 
-
-            dtws[var1][var2] = {}
-            dtws[var1][var2]["similarity"] = similarity
-            dtws[var1][var2]["path"] = path
-            dtws[var1][var2]["matrix"] = matrix
-            dtws[var1][var2]["row_list_values"] = list_values1
-            dtws[var1][var2]["col_list_values"] = list_values2
-            # print(dtw)
+                dtws[var1][var2] = {}
+                dtws[var1][var2]["similarity"] = similarity
+                dtws[var1][var2]["path"] = path
+                dtws[var1][var2]["matrix"] = matrix
+                dtws[var1][var2]["row_list_values"] = list_values1
+                dtws[var1][var2]["col_list_values"] = list_values2
+                # print(dtw)
+            else:
+                dtws[var1][var2] = {}
+                dtws[var1][var2]["similarity"] = 0
+                dtws[var1][var2]["path"] = None
+                dtws[var1][var2]["matrix"] = None
+                dtws[var1][var2]["row_list_values"] = list_values1
+                dtws[var1][var2]["col_list_values"] = list_values2
     return dtws
 
-def calculate_var_distances(trace_json1, trace_json2, allignment_function, fillna=None, non_stutter = False, reverse = False):
+def calculate_var_distances(trace_json1, trace_json2, allignment_function, fillna=None, non_stutter = False, reverse = False, action_seq_json1=None, action_seq_json2=None, pidg_dot1 = None, pidg_dot2 = None, remove_unused = False):
     variables_dfs1 = get_variable_dfs(trace_json1, fillna)
     variables_dfs2 = get_variable_dfs(trace_json2, fillna)
-    return calculate_var_distances_by_dfs(variables_dfs1,variables_dfs2, allignment_function, non_stutter, reverse)
+    return calculate_var_distances_by_dfs(variables_dfs1,variables_dfs2, allignment_function, non_stutter, reverse, action_seq_json1, action_seq_json2, pidg_dot1, pidg_dot2, remove_unused)
 
 def calculate_read_var_distances(read_seq_json1, read_seq_json2, allignment_function, reverse = False):
     variables_dfs1 = get_read_variables_dfs(read_seq_json1)
@@ -832,6 +844,14 @@ class MainWindow(QMainWindow):
         self.reverse_checkbox.stateChanged.connect(self.on_reverse_checkbox_changed)
         task_layout.addLayout(reverse_layout)
 
+        # ----- remove unused widget ----
+        self.not_readable_checkbox = QCheckBox()
+        not_readable_layout = QHBoxLayout()
+        not_readable_layout.addWidget(QLabel("Убрать нечитаемые значения:"))
+        not_readable_layout.addWidget(self.not_readable_checkbox)
+        self.not_readable_checkbox.stateChanged.connect(self.on_not_readable_checkbox_changed)
+        task_layout.addLayout(not_readable_layout)
+
         matrix_layout.addLayout(task_layout)
         lower_layout.addLayout(matrix_layout)
 
@@ -968,6 +988,10 @@ class MainWindow(QMainWindow):
         self.build_matrix()
         self.reshow_current_cell_plots()
 
+    def on_not_readable_checkbox_changed(self):
+        self.build_matrix()
+        self.reshow_current_cell_plots()
+
 
     def _handle_test_selection(self, index: int):
         """
@@ -985,6 +1009,16 @@ class MainWindow(QMainWindow):
                                                    str(self.test_select.currentIndex() + 1)), "state_sequence.json")
         self.seq2_path = os.path.join(os.path.join(os.path.join(os.path.join(tmp_files_dir, "1"), traces),
                                                    str(self.test_select.currentIndex() + 1)), "state_sequence.json")
+
+        self.act_seq1_path = os.path.join(os.path.join(os.path.join(os.path.join(tmp_files_dir, "0"), traces),
+                                                   str(self.test_select.currentIndex() + 1)), "action_sequence.json")
+        self.act_seq2_path = os.path.join(os.path.join(os.path.join(os.path.join(tmp_files_dir, "1"), traces),
+                                                   str(self.test_select.currentIndex() + 1)), "action_sequence.json")
+
+        self.pidg1_path = os.path.join(os.path.join(os.path.join(os.path.join(tmp_files_dir, "0"), traces),
+                                                   str(self.test_select.currentIndex() + 1)), "PIDG.dot")
+        self.pidg2_path = os.path.join(os.path.join(os.path.join(os.path.join(tmp_files_dir, "1"), traces),
+                                                   str(self.test_select.currentIndex() + 1)), "PIDG.dot")
 
         self.read_seq1_path = os.path.join(os.path.join(os.path.join(os.path.join(tmp_files_dir, "0"), traces),
                                                    str(self.test_select.currentIndex() + 1)), "read_var_sequence.json")
@@ -1030,9 +1064,10 @@ class MainWindow(QMainWindow):
         matrix = None
         non_stutter = self.stutter_step_checkbox.isChecked()
         reverse = self.reverse_checkbox.isChecked()
+        remove_unused = self.not_readable_checkbox.isChecked()
         if self.data_type_select.currentIndex() == self.VALUE_SEQUENCE:
             print("self.VALUE_SEQUENCE")
-            matrix = calculate_var_distances(self.seq1_path, self.seq2_path, allignment_function, -1, non_stutter, reverse)
+            matrix = calculate_var_distances(self.seq1_path, self.seq2_path, allignment_function, -1, non_stutter, reverse, self.act_seq1_path, self.act_seq2_path, self.pidg1_path, self.pidg2_path, remove_unused)
         elif self.data_type_select.currentIndex() == self.READ_SEQUENCE:
             print("self.READ_SEQUENCE")
             matrix = calculate_read_var_distances(self.read_seq1_path, self.read_seq2_path, allignment_function, reverse)
