@@ -22,6 +22,7 @@ from pathlib import Path
 from sequence_view_splitter import SequenceViewSplitter
 from metrics import smith_waterman, lcs, dtw
 from sequence_preprocessing import remove_stutter_steps, reverse_sequence, preprocess_sequence
+from variable_action_history_splitter import VariableActionHistorySplitter
 
 script_path = Path(__file__).resolve()
 script_dir = script_path.parent
@@ -892,8 +893,21 @@ class MainWindow(QMainWindow):
         seqY = [2, 5, 8, 10, 14]
         path = [(0, 0), (1, 2), (2, 2), (3, 3), (4, 4)]
         matrix = np.random.rand(len(seqX), len(seqY)) * 10
-        self.seq_view_layout = SequenceViewSplitter(seqX,seqY,path,matrix)
-        main_splitter.addWidget(self.seq_view_layout)
+
+        self.tab_widget = QTabWidget()
+        self.seq_view_layout = SequenceViewSplitter(seqX, seqY, path, matrix)
+        self.tab_widget.addTab(self.seq_view_layout,"Sequence View")
+        self.var_action_history_code1 = VariableActionHistorySplitter()
+        #self.var_action_history_code1.update_by_files(self.seq1_path, self.act_seq1_path)
+        self.var_action_history_code2 = VariableActionHistorySplitter()
+        #self.var_action_history_code2.update_by_files(self.seq2_path, self.act_seq2_path)
+        splitter_action_variables = QSplitter()
+        splitter_action_variables.setOrientation(Qt.Horizontal)
+        splitter_action_variables.addWidget(self.var_action_history_code1)
+        splitter_action_variables.addWidget(self.var_action_history_code2)
+        self.tab_widget.addTab(splitter_action_variables, "Action Sequence")
+
+        main_splitter.addWidget(self.tab_widget)
 
 
 
@@ -957,7 +971,9 @@ class MainWindow(QMainWindow):
             #self.code_files[0] = path
             with open(path, 'r') as f:
                 self.code1_view_text.setText(f.read())
-        self.build_all_pg_and_traces()
+            self.update_code1()
+            #self.build_all_pg_and_traces()
+
 
     def select_code2_file(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -972,23 +988,27 @@ class MainWindow(QMainWindow):
             self.code2_file_edit.setText(path)
             with open(path, 'r') as f:
                 self.code2_view_text.setText(f.read())
-            self.build_all_pg_and_traces()
+            self.update_code2()
+            #self.build_all_pg_and_traces()
+
+    def update_views(self):
+        self.build_matrix()
+        self.reshow_current_cell_plots()
+        print("UPDATE VIEWS")
+        self.var_action_history_code1.update_by_files(self.seq1_path,self.act_seq1_path)
+        self.var_action_history_code2.update_by_files(self.seq2_path, self.act_seq2_path)
 
     def update_code1(self):
         code = self.code1_view_text.toPlainText()
         with open(self.code_files[0], 'w') as f:
             f.write(code)
-        self.build_all_pg_and_traces()
-        self.build_matrix()
-        self.reshow_current_cell_plots()
+        self.build_all_pg_and_traces_and_update_views()
 
     def update_code2(self):
         code = self.code2_view_text.toPlainText()
         with open(self.code_files[1], 'w') as f:
             f.write(code)
-        self.build_all_pg_and_traces()
-        self.build_matrix()
-        self.reshow_current_cell_plots()
+        self.build_all_pg_and_traces_and_update_views()
 
     def set_code_file_text(self):
         pass
@@ -1008,12 +1028,10 @@ class MainWindow(QMainWindow):
             self.build_all_pg_and_traces()
 
     def _data_type_changed(self):
-        self.build_matrix()
-        self.reshow_current_cell_plots()
+        self.update_views()
 
     def _metric_changed(self):
-        self.build_matrix()
-        self.reshow_current_cell_plots()
+        self.update_views()
 
 
     def reshow_current_cell_plots(self):
@@ -1022,16 +1040,13 @@ class MainWindow(QMainWindow):
             self.show_for_cell(self.currentMatrixRow, self.currentMatrixCol)
 
     def on_checkbox_changed(self):
-        self.build_matrix()
-        self.reshow_current_cell_plots()
+        self.update_views()
 
     def on_reverse_checkbox_changed(self):
-        self.build_matrix()
-        self.reshow_current_cell_plots()
+        self.update_views()
 
     def on_not_readable_checkbox_changed(self):
-        self.build_matrix()
-        self.reshow_current_cell_plots()
+        self.update_views()
 
 
     def _handle_test_selection(self, index: int):
@@ -1068,7 +1083,7 @@ class MainWindow(QMainWindow):
                                            "read_var_sequence.json")
         print("SEQ1: ", self.seq1_path)
         print("SEQ2: ", self.seq2_path)
-        self.build_matrix()
+        self.update_views()
 
     def generate_test_case_str(self, test_case) -> str:
         res = test_case["name"] + "\n"
@@ -1203,6 +1218,8 @@ class MainWindow(QMainWindow):
         # metrics_index_selected = self.metric_select.currentIndex()
         # matrix, path, similarity = self.metrics_functions[metrics_index_selected](list1, list2)
         self.seq_view_layout.update(list1,list2,path,matrix, row_header, column_header)
+        self.var_action_history_code1.set_current_variable(row_header)
+        self.var_action_history_code2.set_current_variable(column_header)
 
     def show_plot(self, a, b, a_header="Ряд 1", b_header="Ряд 2"):
         # Гарантируем 1D float-массивы
@@ -1306,6 +1323,12 @@ class MainWindow(QMainWindow):
             if build_traces(pg_file_path, self.task_config["input_variables"], self.task_config["test_cases"],
                             traces_path):
                 print("Traces built")
+
+    def build_all_pg_and_traces_and_update_views(self):
+        if self.task_config_path != "" and self.code_files[0] != "" and self.code_files[1] != "":
+            self.build_pg_and_traces(0)
+            self.build_pg_and_traces(1)
+            self.update_views()
 
     def build_all_pg_and_traces(self):
         if self.task_config_path != "" and self.code_files[0] != "" and self.code_files[1] != "":
