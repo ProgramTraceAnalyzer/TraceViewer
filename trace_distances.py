@@ -766,11 +766,31 @@ class MainWindow(QMainWindow):
         # ---- Middle section: Code views ----
         code_views_widget = QWidget()
         code_views_layout = QHBoxLayout(code_views_widget)
+
+        code1_layout = QVBoxLayout()
         self.code1_view_text = QTextEdit()
+        button_recompile_code1 = QPushButton("Обновить")
+        button_recompile_code1.clicked.connect(self.update_code1)
+        code1_layout.addWidget(self.code1_view_text)
+        code1_layout.addWidget(button_recompile_code1)
+
+        code2_layout = QVBoxLayout()
         self.code2_view_text = QTextEdit()
-        code_views_layout.addWidget(self.code1_view_text)
-        code_views_layout.addWidget(self.code2_view_text)
+        button_recompile_code2 = QPushButton("Обновить")
+        button_recompile_code2.clicked.connect(self.update_code2)
+        code2_layout.addWidget(self.code2_view_text)
+        code2_layout.addWidget(button_recompile_code2)
+
+        code_views_layout.addLayout(code1_layout)
+        code_views_layout.addLayout(code2_layout)
+
+        #self.code1_view_text.textChanged.connect(self.update_code1)
+        #self.code2_view_text.textChanged.connect(self.update_code2)
+        #code_views_layout.addWidget(self.code1_view_text)
+        #code_views_layout.addWidget(self.code2_view_text)
         main_splitter.addWidget(code_views_widget)
+
+
 
         # ---- Lower section: Task config, Test select, Data type, Table ----
         lower_widget = QWidget()
@@ -881,7 +901,9 @@ class MainWindow(QMainWindow):
         self.seq1_path = None
         self.seq2_path = None
 
-        self.code_files = ["", ""]
+        self.code_files = ["",""]
+        self.code_files[0] = os.path.join(script_dir, os.path.join(tmp_files, os.path.join("0","code.cpp")))
+        self.code_files[1] = os.path.join(script_dir, os.path.join(tmp_files, os.path.join("1", "code.cpp")))
         self.task_config_path = ""
         self.task_config = {}
         self.currentMatrixRow = None
@@ -932,7 +954,7 @@ class MainWindow(QMainWindow):
         if path:
             self.code1_path = path
             self.code1_file_edit.setText(path)
-            self.code_files[0] = path
+            #self.code_files[0] = path
             with open(path, 'r') as f:
                 self.code1_view_text.setText(f.read())
         self.build_all_pg_and_traces()
@@ -946,11 +968,30 @@ class MainWindow(QMainWindow):
         )
         if path:
             self.code2_path = path
-            self.code_files[1] = path
+            # self.code_files[1] = path
             self.code2_file_edit.setText(path)
             with open(path, 'r') as f:
                 self.code2_view_text.setText(f.read())
             self.build_all_pg_and_traces()
+
+    def update_code1(self):
+        code = self.code1_view_text.toPlainText()
+        with open(self.code_files[0], 'w') as f:
+            f.write(code)
+        self.build_all_pg_and_traces()
+        self.build_matrix()
+        self.reshow_current_cell_plots()
+
+    def update_code2(self):
+        code = self.code2_view_text.toPlainText()
+        with open(self.code_files[1], 'w') as f:
+            f.write(code)
+        self.build_all_pg_and_traces()
+        self.build_matrix()
+        self.reshow_current_cell_plots()
+
+    def set_code_file_text(self):
+        pass
 
     def select_task_config(self):
         path, _ = QFileDialog.getOpenFileName(
