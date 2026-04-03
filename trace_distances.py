@@ -995,8 +995,8 @@ class MainWindow(QMainWindow):
         self.build_matrix()
         self.reshow_current_cell_plots()
         print("UPDATE VIEWS")
-        self.var_action_history_code1.update_by_files(self.seq1_path,self.act_seq1_path)
-        self.var_action_history_code2.update_by_files(self.seq2_path, self.act_seq2_path)
+        self.var_action_history_code1.update_by_files(self.seq1_path,self.act_seq1_path, self.read_seq1_path)
+        self.var_action_history_code2.update_by_files(self.seq2_path, self.act_seq2_path, self.read_seq2_path)
 
     def update_code1(self):
         code = self.code1_view_text.toPlainText()
