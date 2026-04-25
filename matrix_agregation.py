@@ -13,7 +13,7 @@ def agregate_matrixes(matrix_list):
                     pair_values[var1][var2] = []
                 pair_values[var1][var2].append(value["similarity"])
 
-    for var1, matrix_row in agregated_matrix.items():
+    for var1, matrix_row in pair_values.items():
         if var1 not in agregated_matrix.keys():
             agregated_matrix[var1]={}
         for var2, similarity_list in matrix_row.items():
