@@ -8,6 +8,7 @@ from itertools import permutations, combinations
 
 from PyQt5.QtGui import QColor
 from fastdtw import fastdtw
+from matplotlib.patches import Rectangle
 from numpy.core.multiarray import ndarray
 from scipy.spatial.distance import euclidean, chebyshev
 from sklearn.preprocessing import StandardScaler
@@ -29,11 +30,7 @@ from similarity_matrix import *
 from trace_builder import *
 
 
-
-
-
-
-
+from variable_mapping import calculate_mapping_for_trace_pair, calculate_mapping_statistics_for_traces
 
 import json
 
@@ -45,6 +42,16 @@ import sys
 root_folder = r"D:\Гугл-Диск\КулюкинКС_кандидатская\Сравнение трасс программ\Наши разработки\Эксперименты\Эксперимент_май2025\3\CppSolutions"
 import os
 
+from PyQt5.QtWidgets import QWidget, QVBoxLayout
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+
+
+class PairStatCanvas(FigureCanvas):
+    def __init__(self, parent=None):
+        self.figure = Figure(figsize=(8, 4))
+        super().__init__(self.figure)
+        self.setParent(parent)
 
 def generate_dtw_variables_report(root_folder, report_file):
     trace_files = {}
@@ -87,6 +94,73 @@ def generate_dtw_variables_report(root_folder, report_file):
 
 
 # calculate_similary_two_json_traces(sys.argv[1],sys.argv[2],['side_A', 'side_B'])
+
+
+def visual_pair_statistics(pair_statistics, plot_widget):
+    fig = Figure(figsize=(10, max(3, len(pair_statistics) * 1.6)), facecolor="white")
+    canvas = FigureCanvas(fig)
+    ax = fig.add_subplot(111)
+
+    ax.set_facecolor("white")
+    ax.axis("off")
+
+    label_x = 8
+    start_x = 20
+    max_width = 80
+    gap = 3
+    bar_height = 0.5
+    row_gap = 1.8
+
+    keys = list(pair_statistics.keys())
+    total_rows_height = (len(keys) - 1) * row_gap
+
+    for i, key in enumerate(keys):
+        y = total_rows_height - i * row_gap
+        ax.text(label_x, y, str(key), fontsize=26, ha="center", va="center")
+
+        x = start_x
+        items = sorted(pair_statistics[key].items(), key=lambda item: item[1])
+
+        for value, percent in items:
+            width = max_width * (percent / 100.0)
+
+            ax.add_patch(Rectangle(
+                (x, y - bar_height / 2),
+                width,
+                bar_height,
+                facecolor="#a8d8e8",
+                edgecolor="black",
+                linewidth=2
+            ))
+
+            ax.text(
+                x + width / 2,
+                y - bar_height / 2 - 0.12,
+                f"{value} ({percent:.0f}%)",
+                fontsize=18,
+                ha="center",
+                va="top"
+            )
+
+            x += width + gap
+
+    ax.set_xlim(0, start_x + max_width + 20)
+    ax.set_ylim(-0.8, total_rows_height + 0.8)
+
+    fig.tight_layout()
+
+    layout = plot_widget.layout()
+    if layout is None:
+        layout = QVBoxLayout()
+        plot_widget.setLayout(layout)
+
+    while layout.count():
+        child = layout.takeAt(0)
+        if child.widget():
+            child.widget().deleteLater()
+
+    layout.addWidget(canvas)
+    canvas.draw()
 
 
 from pathlib import Path
@@ -305,6 +379,32 @@ class MainWindow(QMainWindow):
         splitter_action_variables.addWidget(self.var_action_history_code2)
         self.tab_widget.addTab(splitter_action_variables, "Action Sequence")
 
+        splitter_mapping = QSplitter()
+        splitter_mapping.setOrientation(Qt.Vertical)
+        self.mapping_table_widget = QTableWidget()
+        self.mapping_table_widget.setColumnCount(2)
+        self.mapping_table_widget.setHorizontalHeaderLabels(["Прог 1", "Прог 2"])
+
+        mapping_btn = QPushButton("Обновить mapping")
+        mapping_btn.clicked.connect(self.update_mapping)
+        splitter_mapping.addWidget(self.mapping_table_widget)
+
+        # Контейнер под график
+        self.pair_stat_plot = QWidget()
+        self.pair_stat_plot_layout = QVBoxLayout(self.pair_stat_plot)
+
+        # Сам canvas matplotlib
+        self.canvas_pair_stat = PairStatCanvas(self)
+
+        # Добавляем canvas в контейнер
+        self.pair_stat_plot_layout.addWidget(self.canvas_pair_stat)
+
+        splitter_mapping.addWidget(self.pair_stat_plot)
+
+        splitter_mapping.addWidget(mapping_btn)
+        self.tab_widget.addTab(splitter_mapping, "Mapping")
+
+
         main_splitter.addWidget(self.tab_widget)
 
 
@@ -314,6 +414,9 @@ class MainWindow(QMainWindow):
         self.seq2_path = None
 
         self.code_files = ["",""]
+        self.traces_path = ["",""]
+        self.traces_path[0] = os.path.join(script_dir, os.path.join(tmp_files, os.path.join("0","traces")))
+        self.traces_path[1] = os.path.join(script_dir, os.path.join(tmp_files, os.path.join("1", "traces")))
         self.code_files[0] = os.path.join(script_dir, os.path.join(tmp_files, os.path.join("0","code.cpp")))
         self.code_files[1] = os.path.join(script_dir, os.path.join(tmp_files, os.path.join("1", "code.cpp")))
         self.task_config_path = ""
@@ -797,6 +900,18 @@ class MainWindow(QMainWindow):
         plt.title("Визуализация выравнивания последовательностей")
         plt.grid(False)  # Убрать сетку
         self.tab_alignment_Smith.draw()
+
+    def update_mapping(self):
+        self.mapping_table_widget.setRowCount(0)
+        mapping = calculate_mapping_for_trace_pair(self.traces_path[0],self.traces_path[1],40,lcs,True,True)
+        mapping = mapping["mapping"]
+        self.mapping_table_widget.setRowCount(len(mapping))
+        for row, (key, value) in enumerate(mapping.items()):
+            self.mapping_table_widget.setItem(row, 0, QTableWidgetItem(key))  # Ключ
+            self.mapping_table_widget.setItem(row, 1, QTableWidgetItem(value))  # Значение
+        mapping_statistics = calculate_mapping_statistics_for_traces(self.traces_path[0],self.traces_path[1],40,lcs,True,True)
+        print("MAPPING STATISTICS: ",mapping_statistics)
+        visual_pair_statistics(mapping_statistics, self.canvas_pair_stat)
 
 
 # --------------------------------------------------------------------------
